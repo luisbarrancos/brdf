@@ -1,0 +1,62 @@
+analytic
+
+# variables go here...
+# only floats supported right now.
+# [type] [name] [min val] [max val] [default val]
+
+::begin parameters
+float density 0 1.0 0.8
+float scattering 0 1.0 0.6
+float reflectivity 0 1.0 1.0
+color Cd 1 1 1
+::end parameters
+
+
+# Then comes the shader. This should be GLSL code
+# that defines a function called BRDF (although you can
+# add whatever else you want too, like sqr() below).
+
+::begin shader
+
+const float HALF_PI         = 1.57079632679;
+const float PI              = 3.14159265358;
+const float TWO_PI          = 6.28318530717;
+const float THREE_PI        = 9.42477796077;
+const float TWO_OVER_3PI    = 0.21220659078;
+const float EPS             = 1.0e-5;
+
+float sqr( float x )
+{
+    return x*x;
+}
+
+vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y)
+{
+    float cosalpha = clamp(dot(L, V), EPS, 1.0 - EPS);
+    float sinalpha = sqrt(1.0 - sqr(cosalpha));
+    float tanalpha = sinalpha / cosalpha;
+    float alpha    = acos(cosalpha);
+
+    // macroscopic roughness
+    float R;
+
+    if (alpha < HALF_PI - EPS)
+    {
+        float expalpha = exp(-density / tanalpha);
+
+        R = 2.0 - tanalpha / 2.0 * density *
+           (1.0 - expalpha) * (3.0 - expalpha);
+    }
+    else
+    {
+        R = 1.0;
+    }
+    // opposition effect
+
+    float S = TWO_OVER_3PI * ((sinalpha + (PI - alpha) * cosalpha) / PI +
+                scattering * sqr(1.0 - cosalpha));
+
+    return vec3(reflectivity * R * S / (dot(L, N) + dot(V, N)));
+}
+
+::end shader
