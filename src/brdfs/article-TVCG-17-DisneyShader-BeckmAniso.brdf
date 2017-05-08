@@ -1,0 +1,187 @@
+analytic
+
+# variables go here...
+# only floats supported right now.
+# [type] [name] [min val] [max val] [default val]
+
+::begin parameters
+float rho 0 1 .9
+float sigmax 0.0 2.0 0.9
+float sigmay 0.0 2.0 0.9
+float n1 1.001 5.0 1.2
+::end parameters
+
+# Then comes the shader. This should be GLSL code
+# that defines a function called BRDF (although you can
+# add whatever other functions you want too).
+
+::begin shader
+
+const float PI = 3.14159265358979323846;
+
+float funcD2(float sigma1, float sigma2)
+{
+	float cn=exp(0.4*(sigma1-sigma2));
+	float sigma1p=cn*sigma1;
+	float sigma1p2=sigma1p*sigma1p;
+	float sigma1p3=sigma1p2*sigma1p;
+	return 169.905*sigma1p2/(21.7364+179.001*sigma1p+222.806*sigma1p2+13.7846*sigma1p3);
+}
+
+float funcD3(float sigma1, float sigma2)
+{
+	float cn=exp(0.4*(sigma1-sigma2));
+	float sigma1p=cn*sigma1;
+	float sigma1p2=sigma1p*sigma1p;
+	return 345.335*sigma1p2/(1024.89+1125.28*sigma1p+1623.54*sigma1p2);
+}
+
+float funcSC1(float sigma1, float sigma2)
+{
+   float cn=exp(0.4*(sigma1-sigma2));
+   float sigma1p=cn*sigma1;
+   float sigma1p2=sigma1p*sigma1p;
+   return (0.2623-50.2477*sigma1p+379.377*sigma1p2)/(1.2746-7.303*sigma1p-19.669*sigma1p2);
+}
+
+float funcR01(vec3 dir, vec3 N)
+{
+
+  float c1 = dot(N,dir);
+  float n = 1.0 / n1;
+  float r = 0.0;
+  float c2 = 1.0 - n*n * (1. - c1*c1);
+  if(c2 > 0.0)
+  {
+    c2 = sqrt(c2);
+    float Rs = (n*c1 - c2) / (n*c1 + c2);
+    float Rp = (n*c2 - c1) / (n*c2 + c1);
+    Rs *= Rs;
+    Rp *= Rp;
+    r = (Rs + Rp) / 2.0;
+  }
+  return r;
+}
+
+float funcr01()
+{
+	float n=n1, n2=n*n;
+	float n3=n2*n, n4=n2*n2;
+	float n2p1=(n2+1),n2m1=(n2-1);
+	float n2p12=n2p1*n2p1, n2m12=n2m1*n2m1;
+
+	float T1 = 2.0*n3*(n2+2*n-1);
+	float B1=n2p1*(n4-1);
+
+	float T2=(n-1)*(3*n+1);
+	float B2=6*(n+1)*(n+1);
+
+	float T3=8.0*n4*(n4+1);
+	float B3=(n2+1)*(n4-1)*(n4-1);
+
+	float T4=n2*n2m12;
+	float B4=n2p12*n2p1;
+
+	float r01=(1.0/2.0-T1/B1+T2/B2+T3/B3*log(n)-T4/B4*log((n+1)/(n-1)));
+
+	return r01;
+}
+
+float funcT01(vec3 dir, vec3 N)
+{
+  return (1.0-funcR01(dir,N));
+}
+
+float funcr10()
+{
+  float n = 1.0/n1;
+  float r10 = 1.0-((n*n)*(1.0-funcr01()));
+  return r10;
+}
+
+
+vec3 BRDF( vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y )
+{
+	float cto = dot(N,V);
+	float to = acos(cto);
+	float cti = dot(N,L);
+	float ti = acos(cti);
+	
+	vec3 Vop = normalize(V-N*cto);
+	vec3 Vip = normalize(L-N*cti);
+	
+	vec3 epsilon = vec3(1.0,0.0,0.0);
+	vec3 T = normalize(cross(N,epsilon));
+	vec3 B = normalize(cross(N,T));
+	
+	float cpo=dot(T,Vop);
+	float cpi=dot(T,Vip);
+	
+	float spo=dot(B,Vop);
+	float spi=dot(B,Vip);
+	
+	float alpha = max(to,ti);
+	float beta = min(to,ti);
+	
+	float sigmaxy=(sigmax+sigmay)/2.0;
+	float sigmaxy2=sigmaxy*sigmaxy;
+	float c1 = 1.0 - 7.07944*sigmaxy2/(8.66467 + 11.4317*sigmaxy + 8.34372*sigmaxy2);
+	
+	float Dx=funcD2(sigmax,sigmay);
+	float Dy=funcD2(sigmay,sigmax);
+	
+	float cpopi=cpo*cpi*Dx+spo*spi*Dy;
+	
+	float c2p=2.0*beta/PI;
+	float c2;
+	if(cpopi>=0.0)
+		c2=sin(alpha);
+	else
+		c2=sin(alpha)-c2p*c2p*c2p;
+	
+	float frc2=cpopi*c2*tan(beta);
+	
+	Dx = funcD3(sigmax,sigmay);
+	Dy = funcD3(sigmay,sigmax);
+	float c3=4.0*beta*alpha/(PI*PI);
+	c3=c3*c3*tan((alpha+beta)/2.0);
+	float fh;
+	if(cpi==0.0)
+		fh=Dy;
+	else
+	{
+		float pis=atan(spi*Dy/(cpi*Dx));
+		fh=abs(cpi*cos(pis)*Dx+spi*sin(pis)*Dy);
+	}
+	cpopi=cpo*cpi*Dx+spo*spi*Dy;
+	float frc3= (fh-abs(cpopi))*c3;
+	float fron=rho/PI*(c1+frc2+frc3);
+	
+	float r01=funcr01();
+	float t01 = 1 - r01;
+
+	float cs1x = -funcSC1(sigmax,sigmay);
+	float cs1y = -funcSC1(sigmay,sigmax);
+	float fhs = cpo*cpi*cs1x + spo*spi*cs1y;
+	
+	float Finon = r01;
+	float cti1=(1 - cti);
+	float cto1=(1 - cto);
+	Finon = Finon*cti1*cti1*cto1*cto1*min(0,fhs);
+	sigmaxy = max(sigmax,sigmay);
+	sigmaxy2=sigmaxy*sigmaxy;
+	float pa = (0.8835+6.84*sigmaxy-2.821*sigmaxy2)/(0.8821+8.421*sigmaxy+29.312*sigmaxy2);
+	float pb = (-1.252+203.341*sigmaxy-313.617*sigmaxy2)/(57.04+73.376*sigmaxy-252.889*sigmaxy2);
+	float Tin = pa*funcT01(L, N) + (pb*t01);
+	float Ton = pa*funcT01(V, N) + (pb*t01);	
+	float n12=n1*n1;
+	float cs2=(-89.235+146.273*n1-36.1669*n12)/(25.3924-17.6218*n1-8.951*n12);
+	float n1_1=1.0/n1;
+	float frs =n1_1*n1_1*(Tin*Ton*(1 + max(-1, -cs2*Finon)))*1.0/(1.0 - rho*funcr10());
+	
+	float cl1=fron*frs;
+	
+	return vec3(cl1);
+}
+
+::end shader
