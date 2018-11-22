@@ -20,4 +20,5 @@ src/brdf/debug
 *.tmp
 *~
 *.*~
+.qmake.stash
 
